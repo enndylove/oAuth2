@@ -70,7 +70,7 @@ export class AuthService {
   async signIn(entity: User, res: Response) {
     const user = await this.validateUser(entity);
 
-    const payload = { sub: user.id, email: user.email };
+    const payload = { id: user.id, email: user.email };
     const access_token = await this.jwtService.signAsync(payload);
 
     res.header('Authorization', `Bearer ${access_token}`);
