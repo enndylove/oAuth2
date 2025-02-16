@@ -10,6 +10,10 @@ import { DrizzleAsyncProvider } from 'src/drizzle/drizzle.provider';
 import * as q from 'drizzle-orm';
 import type { User } from './entities/user.entity';
 import * as bcrypt from 'bcrypt';
+import { JwtService } from '@nestjs/jwt';
+import { Response } from 'express';
+
+export const JWT_TOKEN_VARIABLE = 'access_token';
 
 @Injectable()
 export class AuthService {
@@ -18,11 +22,22 @@ export class AuthService {
   constructor(
     @Inject(DrizzleAsyncProvider)
     private db: NodePgDatabase<typeof sc>,
+    private readonly jwtService: JwtService,
   ) {}
+
+  async decodeToken(token: string) {
+    try {
+      const decoded = await this.jwtService.verifyAsync(token);
+      return decoded;
+    } catch (error) {
+      throw new UnauthorizedException('Invalid or expired token');
+    }
+  }
 
   async validateUser(entity: User) {
     const user = await this.db.query.users.findFirst({
       columns: {
+        id: true,
         email: true,
         password: true,
       },
@@ -36,9 +51,11 @@ export class AuthService {
     if (!isMatch) {
       throw new UnauthorizedException();
     }
+
+    return user;
   }
 
-  async signUp(entity: User) {
+  async signUp(entity: User): Promise<User[]> {
     const hashPass = await bcrypt.hash(entity.password, this.saltOrRounds);
 
     return this.db
@@ -48,6 +65,34 @@ export class AuthService {
         password: hashPass,
       })
       .returning();
+  }
+
+  async signIn(entity: User, res: Response) {
+    const user = await this.validateUser(entity);
+
+    const payload = { sub: user.id, email: user.email };
+    const access_token = await this.jwtService.signAsync(payload);
+
+    res.header('Authorization', `Bearer ${access_token}`);
+    res.cookie(JWT_TOKEN_VARIABLE, access_token, {
+      sameSite: 'strict',
+      maxAge: 24 * 60 * 60 * 1000, // 1 day
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+    });
+
+    return { access_token };
+  }
+
+  async logout(res: Response) {
+    res.clearCookie(JWT_TOKEN_VARIABLE, {
+      sameSite: 'strict',
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+    });
+    res.removeHeader('Authorization');
+
+    return { message: 'Logged out successfully' };
   }
 
   async getAll() {
